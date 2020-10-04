@@ -16,6 +16,7 @@
 #include <linux/kernel.h>
 #include <asm/segment.h>
 #include <asm/system.h>
+#include <unistd.h>
 
 extern void write_verify(unsigned long address);
 
@@ -54,6 +55,7 @@ int copy_mem(int nr,struct task_struct * p)
 	set_base(p->ldt[1],new_code_base);
 	set_base(p->ldt[2],new_data_base);
 	if (copy_page_tables(old_data_base,new_data_base,data_limit)) {
+		printk("free_page_tables: from copy_mem\n");
 		free_page_tables(new_data_base,data_limit);
 		return -ENOMEM;
 	}
@@ -78,6 +80,7 @@ int copy_process(int nr,long ebp,long edi,long esi,long gs,long none,
 	if (!p)
 		return -EAGAIN;
 	task[nr] = p;
+	__asm volatile ("cld");
 	*p = *current;	/* NOTE! this doesn't copy the supervisor stack */
 	p->state = TASK_UNINTERRUPTIBLE;
 	p->pid = last_pid;
@@ -118,7 +121,7 @@ int copy_process(int nr,long ebp,long edi,long esi,long gs,long none,
 		return -EAGAIN;
 	}
 	for (i=0; i<NR_OPEN;i++)
-		if (f=p->filp[i])
+		if ((f=p->filp[i]))
 			f->f_count++;
 	if (current->pwd)
 		current->pwd->i_count++;
@@ -145,3 +148,109 @@ int find_empty_process(void)
 			return i;
 	return -EAGAIN;
 }
+
+int sys_pthread_attr_init(pthread_attr_t *attr)
+{
+	if(!attr)
+	{
+		printk("Error:init pthread failed!\n");
+		sys_exit(0);
+	}
+
+	attr->state = 0;
+	attr->stackaddr = get_base(current->ldt[1]) + current->brk + PAGE_SIZE;
+	attr->stacksize = PAGE_SIZE;
+
+	return 0;
+}
+
+
+/*由于线程创建过程中很多东西与fork的功能类似，因此参考了copy_process来写本函数。
+ ＊关键难点之处在于线程代码序列的设置和传递参数的设置！最主要是堆栈的调整和个别寄存器的设置！
+ *本函数由thread_fork调用，nr是本线程的task[]的数组号，ecx中存储的是线程代码序列开始执行的地址，而edx中存储的是传递给线程的参数*/
+
+int thread_create(int nr,long ebp,long edi,long esi,long gs,long none,
+		long ebx,long ecx,long edx,
+		long fs,long es,long ds,
+		long eip,long cs,long eflags,long esp,long ss)
+{
+	struct task_struct *p;
+	int i;
+	struct file *f;
+	long func_addr = ecx;
+	long func_arg = edx;
+
+	p = (struct task_struct *) get_free_page();   /*此处申请一页面存放TCB*/
+	if (!p)
+		return -EAGAIN;
+	task[nr] = p;
+	*p = *current;	/* NOTE! this doesn't copy the supervisor stack */
+
+	/*注意：由于同一进程内的线程共享线性地址空间，所以需要专门设置TCB的地址位置以及堆栈起始地址等*/
+	current->brk = current->brk + PAGE_SIZE;
+	p->start_stack = current->brk;
+
+	p->state = TASK_UNINTERRUPTIBLE;
+	p->pid = last_pid;
+	p->father = current->pid;
+	p->counter = p->priority;
+	p->signal = 0;
+	p->alarm = 0;
+	p->leader = 0;		/* process leadership doesn't inherit */
+	p->utime = p->stime = 0;
+	p->cutime = p->cstime = 0;
+	p->start_time = jiffies;
+
+	p->tss.back_link = 0;
+	p->tss.esp0 = PAGE_SIZE + (long) p;
+	p->tss.ss0 = 0x10;
+	p->tss.eip = func_addr;   /*此处注意:必须将ip设置为ecx,因为ecx中存储的是线程代码序列开始执行的地址*/
+	p->tss.eflags = eflags;
+	p->tss.eax = 0;    /*此处应为0，p->tss.eax = eax*/
+	p->tss.ecx = ecx;
+	p->tss.edx = edx;
+	p->tss.ebx = ebx;
+	p->tss.esp = current->brk;   /*此处注意!!!设置线程堆栈的起始地址*/
+	p->tss.ebp = ebp;
+	p->tss.esi = esi;
+	p->tss.edi = edi; 	
+	p->tss.es = es & 0xffff;
+	p->tss.cs = cs & 0xffff;
+	p->tss.ss = ss & 0xffff;
+	p->tss.ds = ds & 0xffff;
+	p->tss.fs = fs & 0xffff;
+	p->tss.gs = gs & 0xffff;
+	/*此处由于是创建线程，所以需要将新线程ldt基址设为父进程的ldt基址。*/
+	p->tss.ldt = current->tss.ldt; 
+	p->tss.trace_bitmap = 0x80000000;
+
+	if (last_task_used_math == current)
+		__asm__("clts ; fnsave %0"::"m" (p->tss.i387));
+	/*此处注意，开始复制页表了*/
+	if (copy_mem(nr,p)) {
+		task[nr] = NULL;
+		free_page((long) p);
+		return -EAGAIN;
+	}
+    /*重要：此处为向线程传递参数。将edx中存放的参数，存到新线程的堆栈顶部。*/
+	put_fs_long(func_arg,p->tss.esp);
+    p->tss.esp -= 4;  /*!!!此处注意!!! 堆栈指针必须向下移动四个字节，以存放返回地址，否则运行后出错*/
+
+	for (i=0; i<NR_OPEN;i++)
+		if ((f=p->filp[i]))
+			f->f_count++;
+	if (current->pwd)
+		current->pwd->i_count++;
+	if (current->root)
+		current->root->i_count++;
+	if (current->executable)
+		current->executable->i_count++;
+
+	set_tss_desc(gdt+(nr<<1)+FIRST_TSS_ENTRY,&(p->tss));
+	set_ldt_desc(gdt+(nr<<1)+FIRST_LDT_ENTRY,&(p->ldt));
+	p->state = TASK_RUNNING;
+
+	return p->pid;
+}	
+
+

@@ -24,6 +24,12 @@ static inline _syscall0(int,fork)
 static inline _syscall0(int,pause)
 static inline _syscall1(int,setup,void *,BIOS)
 static inline _syscall0(int,sync)
+static inline _syscall1(int, gui, const char*, name);
+
+_syscall1(int,pthread_attr_init,pthread_attr_t *,attr);
+_syscall3(int,thread_fork,const pthread_attr_t *,attr,void *,start_routine,void *,arg);
+_syscall2(int,thread_join,pthread_t,thread,void **,value_ptr);
+_syscall1(int,thread_exit,void *,value_ptr);
 
 #include <linux/tty.h>
 #include <linux/sched.h>
@@ -38,11 +44,13 @@ static inline _syscall0(int,sync)
 #include <sys/types.h>
 
 #include <linux/fs.h>
+#include "bootpack.h"
 
 static char printbuf[1024];
 
 extern int vsprintf();
 extern void init(void);
+extern void init2(void);
 extern void blk_dev_init(void);
 extern void chr_dev_init(void);
 extern void hd_init(void);
@@ -101,12 +109,20 @@ static long main_memory_start = 0;
 
 struct drive_info { char dummy[32]; } drive_info;
 
-void main(void)		/* This really IS void, no error here. */
+extern void inet_inthandler20(void);
+extern void inet_inthandler21(void);
+extern void inet_inthandler2c(void);
+
+void HariMain(void);
+
+void start(void)		/* This really IS void, no error here. */
 {			/* The startup routine assumes (well, ...) this */
 /*
  * Interrupts are still disabled. Do necessary setups, then
  * enable them
  */
+    int i;
+
  	ROOT_DEV = ORIG_ROOT_DEV;
  	drive_info = DRIVE_INFO;
 	memory_end = (1<<20) + (EXT_MEM_K<<10);
@@ -133,6 +149,10 @@ void main(void)		/* This really IS void, no error here. */
 	buffer_init(buffer_memory_end);
 	hd_init();
 	floppy_init();
+
+	set_trap_gate(0x20,&inet_inthandler20);
+	set_trap_gate(0x21,&inet_inthandler21);
+	set_trap_gate(0x2c,&inet_inthandler2c);
 	sti();
 	move_to_user_mode();
 	if (!fork()) {		/* we count on this going ok */
@@ -165,9 +185,16 @@ static char * envp_rc[] = { "HOME=/", NULL };
 static char * argv[] = { "-/bin/sh",NULL };
 static char * envp[] = { "HOME=/usr/root", NULL };
 
+void* test_mem(void *thread_arg)
+{
+	/*putfonts8_asc((char *)0x000a0000,320,31,31,COL8_FFFFFF,"ABC 123_2");*/
+	for(;;) ; 
+}
+
 void init(void)
 {
 	int pid,i;
+	pthread_t thread_id;
 
 	setup((void *) &drive_info);
 	(void) open("/dev/tty0",O_RDWR,0);
@@ -176,11 +203,18 @@ void init(void)
 	printf("%d buffers = %d bytes buffer space\n\r",NR_BUFFERS,
 		NR_BUFFERS*BLOCK_SIZE);
 	printf("Free mem: %d bytes\n\r",memory_end-main_memory_start);
+	
 	if (!(pid=fork())) {
 		close(0);
 		if (open("/etc/rc",O_RDONLY,0))
 			_exit(1);
-		execve("/bin/sh",argv_rc,envp_rc);
+
+		gui("1");
+		for(;;) ;
+		/*pthread_attr_t* attr = NULL;
+		thread_id = thread_fork(attr,test_mem,NULL);
+		printf("thread_id1: %d \n\r",thread_id);
+		execve("/bin/sh",argv_rc,envp_rc);*/
 		_exit(2);
 	}
 	if (pid>0)
@@ -207,3 +241,4 @@ void init(void)
 	}
 	_exit(0);	/* NOTE! _exit, not exit() */
 }
+

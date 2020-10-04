@@ -25,17 +25,19 @@
 #include <stdlib.h>	/* contains exit */
 #include <sys/types.h>	/* unistd.h needs this */
 #include <sys/stat.h>
-#include <linux/fs.h>
 #include <unistd.h>	/* contains read/write */
 #include <fcntl.h>
+
+#define MAJOR(a) (((unsigned)(a))>>8)
+#define MINOR(a) ((a)&0xff)
 
 #define MINIX_HEADER 32
 #define GCC_HEADER 1024
 
-#define SYS_SIZE 0x2000
+#define SYS_SIZE 0x3000
 
 #define DEFAULT_MAJOR_ROOT 3
-#define DEFAULT_MINOR_ROOT 6
+#define DEFAULT_MINOR_ROOT 1
 
 /* max nr of sectors of setup: don't change unless you also change
  * bootsect etc */
@@ -65,12 +67,8 @@ int main(int argc, char ** argv)
 		usage();
 	if (argc == 5) {
 		if (strcmp(argv[4], "FLOPPY")) {
-			if (stat(argv[4], &sb)) {
-				perror(argv[4]);
-				die("Couldn't stat root device.");
-			}
-			major_root = MAJOR(sb.st_rdev);
-			minor_root = MINOR(sb.st_rdev);
+			major_root = DEFAULT_MAJOR_ROOT;
+			minor_root = DEFAULT_MINOR_ROOT;
 		} else {
 			major_root = 0;
 			minor_root = 0;
@@ -91,6 +89,7 @@ int main(int argc, char ** argv)
 		die("Unable to open 'boot'");
 	if (read(id,buf,MINIX_HEADER) != MINIX_HEADER)
 		die("Unable to read header of 'boot'");
+	
 	if (((long *) buf)[0]!=0x04100301)
 		die("Non-Minix header of 'boot'");
 	if (((long *) buf)[1]!=MINIX_HEADER)
@@ -131,7 +130,7 @@ int main(int argc, char ** argv)
 	if (((long *) buf)[5] != 0)
 		die("Non-Minix header of 'setup'");
 	if (((long *) buf)[7] != 0)
-		die("Illegal symbol table in 'setup'");
+		die("Illegal symbol table in 'setup'"); 
 	for (i=0 ; (c=read(id,buf,sizeof buf))>0 ; i+=c )
 		if (write(1,buf,c)!=c)
 			die("Write call failed");
@@ -142,6 +141,7 @@ int main(int argc, char ** argv)
 	fprintf(stderr,"Setup is %d bytes.\n",i);
 	for (c=0 ; c<sizeof(buf) ; c++)
 		buf[c] = '\0';
+	
 	while (i<SETUP_SECTS*512) {
 		c = SETUP_SECTS*512-i;
 		if (c > sizeof(buf))
@@ -153,10 +153,10 @@ int main(int argc, char ** argv)
 	
 	if ((id=open(argv[3],O_RDONLY,0))<0)
 		die("Unable to open 'system'");
-	if (read(id,buf,GCC_HEADER) != GCC_HEADER)
-		die("Unable to read header of 'system'");
-	if (((long *) buf)[5] != 0)
-		die("Non-GCC header of 'system'");
+//	if (read(id,buf,GCC_HEADER) != GCC_HEADER)
+//		die("Unable to read header of 'system'");
+//	if (((long *) buf)[5] != 0)
+//		die("Non-GCC header of 'system'");
 	for (i=0 ; (c=read(id,buf,sizeof buf))>0 ; i+=c )
 		if (write(1,buf,c)!=c)
 			die("Write call failed");

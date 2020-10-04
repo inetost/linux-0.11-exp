@@ -12,9 +12,11 @@
 #include <linux/kernel.h>
 #include <linux/tty.h>
 #include <asm/segment.h>
+#include <unistd.h>
 
 int sys_pause(void);
 int sys_close(int fd);
+void* thread_value[4096]={};
 
 void release(struct task_struct * p)
 {
@@ -64,18 +66,18 @@ int sys_kill(int pid,int sig)
 
 	if (!pid) while (--p > &FIRST_TASK) {
 		if (*p && (*p)->pgrp == current->pid) 
-			if (err=send_sig(sig,*p,1))
+			if ((err=send_sig(sig,*p,1)))
 				retval = err;
 	} else if (pid>0) while (--p > &FIRST_TASK) {
 		if (*p && (*p)->pid == pid) 
-			if (err=send_sig(sig,*p,0))
+			if ((err=send_sig(sig,*p,0)))
 				retval = err;
-	} else if (pid == -1) while (--p > &FIRST_TASK)
-		if (err = send_sig(sig,*p,0))
+	} else if (pid == -1) while (--p > &FIRST_TASK) {
+		if ((err = send_sig(sig,*p,0)))
 			retval = err;
-	else while (--p > &FIRST_TASK)
+	} else while (--p > &FIRST_TASK)
 		if (*p && (*p)->pgrp == -pid)
-			if (err = send_sig(sig,*p,0))
+			if ((err = send_sig(sig,*p,0)))
 				retval = err;
 	return retval;
 }
@@ -102,7 +104,6 @@ static void tell_father(int pid)
 int do_exit(long code)
 {
 	int i;
-
 	free_page_tables(get_base(current->ldt[1]),get_limit(0x0f));
 	free_page_tables(get_base(current->ldt[2]),get_limit(0x17));
 	for (i=0 ; i<NR_TASKS ; i++)
@@ -194,4 +195,89 @@ repeat:
 	return -ECHILD;
 }
 
+int sys_thread_exit(void* value_ptr)
+{
+	int i;
+	pthread_t thread;
+	
+	free_page_tables(get_base(current->ldt[1]),get_limit(0x0f));
+	free_page_tables(get_base(current->ldt[2]),get_limit(0x17));
+	for (i=0 ; i<NR_TASKS ; i++)
+		if (task[i] && task[i]->father == current->pid) {
+			task[i]->father = 1;
+			if (task[i]->state == TASK_ZOMBIE)
+				/* assumption task[1] is always init */
+				(void) send_sig(SIGCHLD, task[1], 1);
+		}
+	for (i=0 ; i<NR_OPEN ; i++)
+		if (current->filp[i])
+			sys_close(i);
+	iput(current->pwd);
+	current->pwd=NULL;
+	iput(current->root);
+	current->root=NULL;
+	iput(current->executable);
+	current->executable=NULL;
+	if (current->leader && current->tty >= 0)
+		tty_table[current->tty].pgrp = 0;
+	if (last_task_used_math == current)
+		last_task_used_math = NULL;
+	if (current->leader)
+		kill_session();
+	current->state = TASK_ZOMBIE;
+	thread = current->pid;    
+	thread_value[thread] = value_ptr;
+	tell_father(current->father);
+    schedule();
+	return (-1);
+}
+
+
+int sys_thread_join(pthread_t thread,void **value_ptr)
+{
+	if(thread <= 0 || value_ptr == NULL)
+	{
+		printk("Error:thread joining failed!\n");
+		sys_exit(0);
+	}
+
+	int flag;
+	struct task_struct ** p;
+repeat:
+	flag=0;
+	for(p = &LAST_TASK ; p > &FIRST_TASK ; --p)
+	{
+		if (!*p || *p == current)
+			continue;
+		if ((*p)->father != current->pid)
+			continue;
+		if ((*p)->pid != thread)
+			continue;
+		
+		switch ((*p)->state)
+		{
+			case TASK_STOPPED:
+				break;
+			case TASK_ZOMBIE:
+				current->cutime += (*p)->utime;
+				current->cstime += (*p)->stime;
+				release(*p);
+				put_fs_long(thread_value[thread],value_ptr);
+				return 0;
+			default:
+				flag=1;
+				break;
+		}
+	}
+	if (flag) {
+		current->state = TASK_INTERRUPTIBLE;	
+		schedule();
+		if (!(current->signal &= ~(1<<(SIGCHLD-1))))
+			goto repeat;
+		else
+			return -EINTR;
+	}
+
+	return -ECHILD;
+}
 

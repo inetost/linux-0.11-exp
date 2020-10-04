@@ -55,6 +55,18 @@
 #include <sys/utsname.h>
 #include <utime.h>
 
+
+/*与线程有关的定义均在此处*/
+struct pthread_attr_t
+{
+	long state;
+	void *stackaddr;   /*线程栈的位置*/
+    size_t stacksize;    /*线程栈的大小*/
+};
+typedef struct pthread_attr_t pthread_attr_t;
+typedef long pthread_t;
+
+
 #ifdef __LIBRARY__
 
 #define __NR_setup	0	/* used only by init, to get system going */
@@ -129,7 +141,11 @@
 #define __NR_ssetmask	69
 #define __NR_setreuid	70
 #define __NR_setregid	71
-
+#define __NR_gui		72
+#define __NR_pthread_attr_init 73
+#define __NR_thread_fork 74
+#define __NR_thread_join 75
+#define __NR_thread_exit 76
 #define _syscall0(type,name) \
 type name(void) \
 { \
@@ -207,7 +223,7 @@ int execle(const char * pathname, char * arg0, ...);
 volatile void exit(int status);
 volatile void _exit(int status);
 int fcntl(int fildes, int cmd, ...);
-int fork(void);
+//int fork(void);
 int getpid(void);
 int getuid(void);
 int geteuid(void);
@@ -221,7 +237,7 @@ int mknod(const char * filename, mode_t mode, dev_t dev);
 int mount(const char * specialfile, const char * dir, int rwflag);
 int nice(int val);
 int open(const char * filename, int flag, ...);
-int pause(void);
+//int pause(void);
 int pipe(int * fildes);
 int read(int fildes, char * buf, off_t count);
 int setpgrp(void);
@@ -232,7 +248,7 @@ void (*signal(int sig, void (*fn)(int)))(int);
 int stat(const char * filename, struct stat * stat_buf);
 int fstat(int fildes, struct stat * stat_buf);
 int stime(time_t * tptr);
-int sync(void);
+//int sync(void);
 time_t time(time_t * tloc);
 time_t times(struct tms * tbuf);
 int ulimit(int cmd, long limit);
