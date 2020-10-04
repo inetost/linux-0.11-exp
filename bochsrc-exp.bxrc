@@ -1,0 +1,32 @@
+romimage: file=/usr/local/share/bochs/BIOS-bochs-latest
+
+megs: 16
+
+vgaromimage: file=/usr/local/share/bochs/VGABIOS-lgpl-latest
+
+floppya: 1_44="Image", status=inserted
+
+#floppyb: 1_44="rootimage-0.11", status=inserted
+
+boot: a
+
+ata0-master: type=disk, path="hdc.img", mode=flat, cylinders=410, heads=16, spt=38
+
+
+log: bochsout.txt
+
+parport1: enabled=0
+
+#vga: extension=vbe,update_freq=5, realtime=1
+
+#floppy_command_delay: 50000
+
+cpu: count=1, ips=4000000
+
+mouse: enabled=0
+
+private_colormap: enabled=0
+
+fullscreen: enabled=0
+
+screenmode: name="sample"
